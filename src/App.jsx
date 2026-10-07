@@ -1,280 +1,293 @@
 import React, { useState } from 'react';
-import Navbar from './components/Navbar';
-import ProfileCard from './components/ProfileCard';
-import ChatView from './components/ChatView';
-import CompatibilityQuiz from './components/CompatibilityQuiz';
-import Badge from './components/Badge';
-import { SAMPLE_PROFILES, CATEGORIES, INITIAL_MATCHES } from './data/profiles';
+import FriendCard from './components/FriendCard';
+import IcebreakerModal from './components/IcebreakerModal';
+import { GEEK_FRIENDS_POOL, CURRENT_USER_PROFILE } from './data/friendProfiles';
+import { rankFriendsFeed } from './algorithms/friendMatching';
 import { 
-  Filter, 
-  RotateCcw, 
+  Users, 
+  MessageSquare, 
   Sparkles, 
   Terminal, 
-  GitMerge, 
-  SlidersHorizontal,
-  Heart,
-  ChevronDown
+  Compass, 
+  Search,
+  Filter,
+  CheckCircle2,
+  Heart
 } from 'lucide-react';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('discover'); // 'discover' | 'quiz' | 'chats'
-  const [selectedCategory, setSelectedCategory] = useState('all');
-  const [profiles, setProfiles] = useState(SAMPLE_PROFILES);
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [matches, setMatches] = useState(INITIAL_MATCHES);
-  const [toastMessage, setToastMessage] = useState(null);
+  const [activeTab, setActiveTab] = useState('discover'); // 'discover' | 'friends'
+  const [icebreakerTarget, setIcebreakerTarget] = useState(null); // { profile, prompt }
+  const [sentRequests, setSentRequests] = useState({});
+  const [friendsList, setFriendsList] = useState([
+    {
+      id: "friend-1",
+      name: "Marcus Vance",
+      handle: "marcus_v",
+      avatar: "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&w=400&q=80",
+      lastMessage: "I finished lubricating the Holy Panda switches! They sound amazing ⌨️",
+      time: "10 mins ago"
+    }
+  ]);
+  const [toast, setToast] = useState(null);
 
-  // Filter profiles based on selected category
-  const filteredProfiles = profiles.filter(profile => {
-    if (selectedCategory === 'all') return true;
-    return profile.tags.some(tag => tag.category === selectedCategory);
-  });
-
-  const currentProfile = filteredProfiles[currentIndex] || null;
+  // Background Feed Ranking based on AoA Similarity (Jaccard + Cosine metrics)
+  const rankedFeed = rankFriendsFeed(CURRENT_USER_PROFILE, GEEK_FRIENDS_POOL);
 
   const showToast = (msg) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3500);
+    setToast(msg);
+    setTimeout(() => setToast(null), 3500);
   };
 
-  const handleApprove = (profile) => {
-    showToast(`🎉 Pull Request merged with ${profile.name}! Added to Terminal Chats.`);
-    // Add to matches if not already there
-    const exists = matches.some(m => m.profileId === profile.id);
-    if (!exists) {
-      const newMatch = {
-        id: `match-${Date.now()}`,
-        profileId: profile.id,
-        matchedAt: 'Just now',
-        lastMessage: 'PR merged successfully! Say hello 👋',
-        unread: 1,
-        messages: [
-          { id: 1, sender: 'them', text: `Hey! I saw you approved my pull request. Love your taste in tech! What projects are you hacking on lately? 🚀`, time: 'Just now' }
-        ]
-      };
-      setMatches([newMatch, ...matches]);
-    }
-
-    if (currentIndex + 1 < filteredProfiles.length) {
-      setCurrentIndex(currentIndex + 1);
-    } else {
-      setCurrentIndex(0); // loop or finish
-    }
+  const handleOpenIcebreaker = (profile, prompt) => {
+    setIcebreakerTarget({ profile, prompt });
   };
 
-  const handleRequestChanges = (profile) => {
-    showToast(`Changes requested for ${profile.name}. Codebase remains pristine.`);
-    if (currentIndex + 1 < filteredProfiles.length) {
-      setCurrentIndex(currentIndex + 1);
-    } else {
-      setCurrentIndex(0);
-    }
-  };
+  const handleSendIcebreaker = (profile, prompt, message) => {
+    setSentRequests(prev => ({ ...prev, [profile.id]: true }));
+    showToast(`Friend request & icebreaker sent to ${profile.name}!`);
 
-  const handleDirectMessage = (profile) => {
-    const existing = matches.find(m => m.profileId === profile.id);
-    if (!existing) {
-      const newMatch = {
-        id: `match-${Date.now()}`,
-        profileId: profile.id,
-        matchedAt: 'Just now',
-        lastMessage: 'Terminal ping sent...',
-        unread: 0,
-        messages: [
-          { id: 1, sender: 'me', text: `Hi ${profile.name}! Saw your profile and had to ping you directly.`, time: 'Just now' }
-        ]
-      };
-      setMatches([newMatch, ...matches]);
-    }
-    setActiveTab('chats');
-  };
-
-  const handleSendMessage = (text) => {
-    if (!matches.length) return;
-    const activeMatch = matches[0];
-    const newMsg = {
-      id: Date.now(),
-      sender: 'me',
-      text,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    };
-    
-    // Auto-reply after 1.5s for realism
+    // Auto-accept after 3 seconds to demonstrate 1-on-1 friendship connection
     setTimeout(() => {
-      const replies = [
-        "100% agreed! That is why open source will always prevail.",
-        "Haha totally! Let's definitely grab boba or coffee and discuss this further.",
-        "Wait, are you free this weekend? There's a retro arcade night happening downtown!",
-        "Nice! Send me your GitHub username, I'll star your repo ⭐"
-      ];
-      const randomReply = replies[Math.floor(Math.random() * replies.length)];
-      const responseMsg = {
-        id: Date.now() + 1,
-        sender: 'them',
-        text: randomReply,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      };
-      setMatches(prev => prev.map(m => m.id === activeMatch.id ? { ...m, messages: [...m.messages, responseMsg] } : m));
-    }, 1500);
-
-    setMatches(prev => prev.map(m => m.id === activeMatch.id ? { ...m, messages: [...m.messages, newMsg] } : m));
+      setFriendsList(prev => [
+        {
+          id: `friend-${Date.now()}`,
+          name: profile.name,
+          handle: profile.handle,
+          avatar: profile.avatar,
+          lastMessage: `Accepted your icebreaker! Let's talk soon.`,
+          time: 'Just now'
+        },
+        ...prev
+      ]);
+      showToast(`🎉 ${profile.name} accepted your friend request! Added to Friends.`);
+    }, 3000);
   };
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-      <div className="cyber-grid" />
-
-      {/* Global Navigation Header */}
-      <Navbar 
-        activeTab={activeTab} 
-        setActiveTab={setActiveTab} 
-        matchCount={matches.length}
-      />
-
-      {/* Toast Notification */}
-      {toastMessage && (
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--reddit-bg)' }}>
+      {/* Toast popup */}
+      {toast && (
         <div style={{
           position: 'fixed',
           bottom: '24px',
           right: '24px',
-          zIndex: 100,
-          background: 'rgba(21, 28, 44, 0.95)',
-          backdropFilter: 'blur(12px)',
-          border: '1px solid #10b981',
-          padding: '0.85rem 1.25rem',
-          borderRadius: 'var(--radius-md)',
-          boxShadow: '0 10px 30px rgba(0, 0, 0, 0.5), 0 0 20px rgba(16, 185, 129, 0.25)',
-          fontFamily: 'var(--font-mono)',
-          fontSize: '0.85rem',
+          background: 'var(--reddit-card)',
+          border: '1px solid var(--reddit-orange)',
           color: '#ffffff',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          animation: 'floatCard 0.3s ease'
+          padding: '10px 18px',
+          borderRadius: '10px',
+          fontSize: '0.85rem',
+          fontWeight: 600,
+          zIndex: 1000,
+          boxShadow: '0 8px 24px rgba(0,0,0,0.6)'
         }}>
-          <GitMerge size={16} color="#10b981" />
-          <span>{toastMessage}</span>
+          {toast}
         </div>
       )}
 
-      {/* Main Content Area */}
-      <main style={{ flex: 1, padding: '1.25rem 1rem', position: 'relative', zIndex: 1 }}>
-        {activeTab === 'discover' && (
-          <div>
-            {/* Geek Taxonomy & Fandom Filter Ribbon */}
-            <div style={{
-              maxWidth: '900px',
-              margin: '0 auto 1.5rem auto',
+      {/* Top Navbar */}
+      <header style={{
+        height: '54px',
+        background: 'var(--reddit-card)',
+        borderBottom: '1px solid var(--reddit-border)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '0 1.5rem',
+        position: 'sticky',
+        top: 0,
+        zIndex: 50
+      }}>
+        {/* Brand */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div style={{
+            width: '32px',
+            height: '32px',
+            borderRadius: '8px',
+            background: 'linear-gradient(135deg, #ff4500 0%, #ff8700 100%)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#ffffff',
+            fontWeight: 800,
+            fontSize: '1rem'
+          }}>
+            G
+          </div>
+          <span style={{ fontWeight: 800, fontSize: '1.15rem', color: '#ffffff', letterSpacing: '-0.02em' }}>
+            GeekHub
+          </span>
+          <span style={{ fontSize: '0.75rem', color: 'var(--reddit-muted)', marginLeft: '4px' }}>
+            Friendships for Introverted Geeks
+          </span>
+        </div>
+
+        {/* Navigation Tabs */}
+        <div style={{ display: 'flex', gap: '6px' }}>
+          <button
+            onClick={() => setActiveTab('discover')}
+            style={{
               display: 'flex',
               alignItems: 'center',
-              gap: '0.5rem',
-              overflowX: 'auto',
-              paddingBottom: '0.5rem'
+              gap: '6px',
+              padding: '6px 14px',
+              borderRadius: '999px',
+              border: 'none',
+              background: activeTab === 'discover' ? 'rgba(255, 69, 0, 0.15)' : 'transparent',
+              color: activeTab === 'discover' ? 'var(--reddit-orange)' : 'var(--reddit-muted)',
+              fontWeight: 600,
+              fontSize: '0.85rem',
+              cursor: 'pointer'
+            }}
+          >
+            <Compass size={16} />
+            <span>Discover Geeks</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('friends')}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '6px 14px',
+              borderRadius: '999px',
+              border: 'none',
+              background: activeTab === 'friends' ? 'rgba(255, 69, 0, 0.15)' : 'transparent',
+              color: activeTab === 'friends' ? 'var(--reddit-orange)' : 'var(--reddit-muted)',
+              fontWeight: 600,
+              fontSize: '0.85rem',
+              cursor: 'pointer'
+            }}
+          >
+            <Users size={16} />
+            <span>My Friends ({friendsList.length})</span>
+          </button>
+        </div>
+
+        {/* Current User Pill */}
+        <div style={{
+          fontSize: '0.8rem',
+          color: '#e2e8f0',
+          background: 'rgba(255, 255, 255, 0.05)',
+          padding: '4px 12px',
+          borderRadius: '999px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '6px'
+        }}>
+          <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#22c55e' }} />
+          <span>@{CURRENT_USER_PROFILE.handle}</span>
+        </div>
+      </header>
+
+      {/* Main Container */}
+      <main style={{ flex: 1, maxWidth: '640px', margin: '0 auto', width: '100%', padding: '24px 16px' }}>
+        {activeTab === 'discover' && (
+          <div>
+            {/* Feed Sub-header */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginBottom: '20px',
+              padding: '0 4px'
             }}>
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.4rem',
-                fontSize: '0.8rem',
-                fontFamily: 'var(--font-mono)',
-                color: 'var(--text-faint)',
-                paddingRight: '0.5rem',
-                borderRight: '1px solid var(--border-glass)'
-              }}>
-                <Filter size={14} />
-                <span>Filter:</span>
+              <div>
+                <h1 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#ffffff' }}>
+                  Curated Geek Friends
+                </h1>
+                <p style={{ fontSize: '0.8rem', color: 'var(--reddit-muted)', marginTop: '2px' }}>
+                  Ranked by shared tech stack, setups, & niche fandoms
+                </p>
               </div>
 
-              {CATEGORIES.map(cat => {
-                const isSelected = selectedCategory === cat.id;
-                return (
-                  <button
-                    key={cat.id}
-                    onClick={() => {
-                      setSelectedCategory(cat.id);
-                      setCurrentIndex(0);
-                    }}
-                    style={{
-                      padding: '0.45rem 0.9rem',
-                      borderRadius: 'var(--radius-full)',
-                      border: isSelected ? '1px solid #a855f7' : '1px solid var(--border-glass)',
-                      background: isSelected ? 'rgba(168, 85, 247, 0.2)' : 'rgba(255, 255, 255, 0.03)',
-                      color: isSelected ? '#ffffff' : 'var(--text-muted)',
-                      fontFamily: 'var(--font-mono)',
-                      fontSize: '0.78rem',
-                      fontWeight: isSelected ? 600 : 400,
-                      cursor: 'pointer',
-                      whiteSpace: 'nowrap',
-                      transition: 'all 0.2s',
-                      boxShadow: isSelected ? '0 0 12px rgba(168, 85, 247, 0.3)' : 'none'
-                    }}
-                  >
-                    {cat.label}
-                  </button>
-                );
-              })}
+              <div style={{
+                fontSize: '0.75rem',
+                color: 'var(--reddit-muted)',
+                background: 'rgba(255, 255, 255, 0.04)',
+                padding: '4px 10px',
+                borderRadius: '6px'
+              }}>
+                Algorithmically ranked
+              </div>
             </div>
 
-            {/* Profile PR Card Presentation */}
-            {currentProfile ? (
-              <ProfileCard
-                profile={currentProfile}
-                onApprove={handleApprove}
-                onRequestChanges={handleRequestChanges}
-                onDirectMessage={handleDirectMessage}
+            {/* Friend Cards Stack (Hinge + Instagram Style) */}
+            {rankedFeed.map(profile => (
+              <FriendCard
+                key={profile.id}
+                profile={profile}
+                onOpenIcebreaker={handleOpenIcebreaker}
+                isRequested={Boolean(sentRequests[profile.id])}
               />
-            ) : (
-              <div className="glass-panel" style={{
-                maxWidth: '500px',
-                margin: '3rem auto',
-                padding: '2.5rem',
-                borderRadius: 'var(--radius-lg)',
-                textAlign: 'center'
-              }}>
-                <Terminal size={48} color="#a855f7" style={{ margin: '0 auto 1rem auto' }} />
-                <h3 style={{ fontSize: '1.4rem', fontWeight: 700, color: '#ffffff' }}>End of Pull Request Queue</h3>
-                <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginTop: '0.5rem', lineHeight: '1.5' }}>
-                  No more PRs matching filter: <code style={{ color: '#06b6d4' }}>{selectedCategory}</code>. Reset filters or re-seed the queue.
-                </p>
-                <button
-                  onClick={() => {
-                    setSelectedCategory('all');
-                    setCurrentIndex(0);
-                  }}
-                  className="btn-neon-purple"
-                  style={{
-                    marginTop: '1.5rem',
-                    padding: '0.75rem 1.5rem',
-                    borderRadius: 'var(--radius-md)',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '0.5rem'
-                  }}
-                >
-                  <RotateCcw size={16} />
-                  <span>Reset All Filters</span>
-                </button>
-              </div>
-            )}
+            ))}
           </div>
         )}
 
-        {activeTab === 'quiz' && (
-          <CompatibilityQuiz 
-            onQuizCompleted={(score) => {
-              showToast(`Quiz completed with ${score}% affinity! Matching engine calibrated.`);
-            }} 
-          />
-        )}
+        {activeTab === 'friends' && (
+          <div>
+            <div style={{ marginBottom: '20px', padding: '0 4px' }}>
+              <h1 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#ffffff' }}>
+                Your Friendships & Messages
+              </h1>
+              <p style={{ fontSize: '0.8rem', color: 'var(--reddit-muted)', marginTop: '2px' }}>
+                1-on-1 connections with zero awkwardness
+              </p>
+            </div>
 
-        {activeTab === 'chats' && (
-          <ChatView 
-            activeMatch={matches[0]} 
-            profiles={SAMPLE_PROFILES}
-            onSendMessage={handleSendMessage}
-          />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {friendsList.map(friend => (
+                <div
+                  key={friend.id}
+                  style={{
+                    background: 'var(--reddit-card)',
+                    border: '1px solid var(--reddit-border)',
+                    borderRadius: '12px',
+                    padding: '14px 18px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <img 
+                      src={friend.avatar} 
+                      alt={friend.name}
+                      style={{ width: '46px', height: '46px', borderRadius: '50%', objectFit: 'cover' }}
+                    />
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={{ fontWeight: 700, fontSize: '0.95rem', color: '#ffffff' }}>{friend.name}</span>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--reddit-muted)' }}>@{friend.handle}</span>
+                      </div>
+                      <div style={{ fontSize: '0.82rem', color: '#c5ced6', marginTop: '3px' }}>
+                        {friend.lastMessage}
+                      </div>
+                    </div>
+                  </div>
+
+                  <span style={{ fontSize: '0.72rem', color: 'var(--reddit-muted)' }}>
+                    {friend.time}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
         )}
       </main>
+
+      {/* Icebreaker Prompt Reply Modal */}
+      {icebreakerTarget && (
+        <IcebreakerModal
+          profile={icebreakerTarget.profile}
+          prompt={icebreakerTarget.prompt}
+          onClose={() => setIcebreakerTarget(null)}
+          onSend={handleSendIcebreaker}
+        />
+      )}
     </div>
   );
 }
