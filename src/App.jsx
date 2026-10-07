@@ -5,6 +5,7 @@ import { ProfilePage } from './components/ProfilePage';
 import { ChatPage } from './components/ChatPage';
 import { PostsFeed } from './components/PostsFeed';
 import { DiscoverPage } from './components/DiscoverPage';
+import { AlgorithmLab } from './components/AlgorithmLab';
 
 function AuthScreen() {
   const [isLogin, setIsLogin] = useState(true);
@@ -48,6 +49,8 @@ function MainApp() {
         return <ChatPage initialActive={pendingConvo} />;
       case 'feed':
         return <PostsFeed />;
+      case 'lab':
+        return <AlgorithmLab />;
       default:
         return <DiscoverPage onStartChat={handleStartChat} onViewProfile={handleViewProfile} />;
     }
@@ -61,7 +64,7 @@ function MainApp() {
           <span style={styles.brandName}>GeekHub</span>
         </div>
         <nav style={styles.nav}>
-          {['discover', 'feed', 'chat', 'profile'].map(tab => (
+          {['discover', 'feed', 'chat', 'profile', 'lab'].map(tab => (
             <button
               key={tab}
               style={{ ...styles.navBtn, ...(activeTab === tab ? styles.navActive : {}) }}
@@ -74,6 +77,7 @@ function MainApp() {
               {tab === 'feed' && 'Feed'}
               {tab === 'chat' && 'Chat'}
               {tab === 'profile' && 'Profile'}
+              {tab === 'lab' && 'Lab'}
             </button>
           ))}
         </nav>

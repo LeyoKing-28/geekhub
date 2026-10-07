@@ -33,4 +33,9 @@ export const api = {
 
   getRecommendations: async () => (await fetch(`${API_URL}/recommendations`, { headers: auth() })).json(),
   getSuggestions: async () => (await fetch(`${API_URL}/suggestions`, { headers: auth() })).json(),
+
+  labOverview: async () => (await fetch(`${API_URL}/lab/overview`, { headers: auth() })).json(),
+  feedTrace: async (postId) => (await fetch(`${API_URL}/lab/feed-trace?post_id=${postId}`, { headers: auth() })).json(),
+  suggestTrace: async (userId) => (await fetch(`${API_URL}/lab/suggest-trace?user_id=${userId}`, { headers: auth() })).json(),
+  egoGraph: async () => (await fetch(`${API_URL}/lab/ego-graph`, { headers: auth() })).json(),
 };

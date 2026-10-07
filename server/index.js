@@ -164,46 +164,60 @@ app.post('/api/posts/:id/comments', authenticate, async (req, res) => {
   res.json(r.rows[0]);
 });
 
-// ---------- Social feed: ranked posts ----------
-app.get('/api/feed', authenticate, async (req, res) => {
-  const meId = req.user.id;
+// ---------- Social feed: ranked posts (shared helper so /api/feed and lab traces use one code path) ----------
+async function feedContext(meId) {
   const me = (await pool.query('SELECT * FROM users WHERE id=$1', [meId])).rows[0];
   const myTags = new Set([...(me.skills || []), ...(me.fandoms || [])].map(t => String(t).toLowerCase()));
   const following = new Set((await pool.query('SELECT following_id FROM follows WHERE follower_id=$1', [meId])).rows.map(r => r.following_id));
   const likedByFollowing = await pool.query(
-    `SELECT DISTINCT pl.post_id, u.username FROM post_likes pl JOIN users u ON u.id=pl.user_id WHERE pl.user_id = ANY($1)`, [ [...following] ]);
+    `SELECT DISTINCT pl.post_id, u.username FROM post_likes pl JOIN users u ON u.id=pl.user_id WHERE pl.user_id = ANY($1)`, [[...following]]);
   const likedMap = {};
   likedByFollowing.rows.forEach(r => { (likedMap[r.post_id] = likedMap[r.post_id] || []).push(r.username); });
+  return { me, myTags, following, likedMap };
+}
 
+async function computeFeed(meId) {
+  const { myTags, following, likedMap } = await feedContext(meId);
   const r = await pool.query(
     `SELECT p.*, u.username, u.display_name, u.avatar_url FROM posts p JOIN users u ON u.id=p.user_id ORDER BY p.created_at DESC LIMIT 200`, []);
   const enriched = await enrichPosts(r.rows, meId);
   const now = Date.now();
-  const ranked = enriched.map(p => {
+  return enriched.map(p => {
     const hours = Math.max(0.5, (now - new Date(p.created_at).getTime()) / 36e5);
-    const tagOverlap = (p.tags || []).filter(t => myTags.has(String(t).toLowerCase())).length;
+    const sharedTags = (p.tags || []).filter(t => myTags.has(String(t).toLowerCase()));
     const fromFollowed = following.has(p.user_id);
     const likedNames = likedMap[p.id] || [];
-    let score = (p.like_count * 2 + p.comment_count * 3 + p.share_count * 4) / Math.pow(hours + 2, 1.2);
+    const engagement = p.like_count * 2 + p.comment_count * 3 + p.share_count * 4;
+    const decay = Math.pow(hours + 2, 1.2);
+    const base = engagement / decay;
+    let score = base;
     if (fromFollowed) score += 25;
     if (likedNames.length) score += 15 + likedNames.length * 5;
-    score += tagOverlap * 8;
+    score += sharedTags.length * 8;
     const reasons = [];
     if (fromFollowed) reasons.push(`From @${p.username} you follow`);
     if (likedNames.length) reasons.push(`Liked by ${likedNames.slice(0, 2).map(n => '@' + n).join(', ')}${likedNames.length > 2 ? ` +${likedNames.length - 2} more` : ''} you follow`);
-    if (tagOverlap) reasons.push(`Matches your interests: ${(p.tags || []).filter(t => myTags.has(String(t).toLowerCase())).slice(0, 3).join(', ')}`);
+    if (sharedTags.length) reasons.push(`Matches your interests: ${sharedTags.slice(0, 3).join(', ')}`);
     if (!reasons[0] && (p.like_count + p.comment_count) >= 5) reasons.push('Trending in GeekHub');
-    return { ...p, feed_score: Math.round(score * 10) / 10, feed_reason: reasons[0] || null };
+    return { ...p, feed_score: Math.round(score * 10) / 10, feed_reason: reasons[0] || null,
+      _trace: { hours: +hours.toFixed(1), sharedTags, fromFollowed, likedNames,
+        likes: +p.like_count, comments: +p.comment_count, shares: +p.share_count,
+        engagement, decay: +decay.toFixed(2), base: +base.toFixed(2) } };
   }).sort((a, b) => b.feed_score - a.feed_score);
-  res.json(ranked);
+}
+
+const stripTrace = ({ _trace, ...rest }) => rest;
+
+app.get('/api/feed', authenticate, async (req, res) => {
+  res.json((await computeFeed(req.user.id)).map(stripTrace));
 });
 
-// ---------- Suggestions with reasons ----------
-app.get('/api/suggestions', authenticate, async (req, res) => {
-  const meId = req.user.id;
+// ---------- Suggestions with reasons (shared helper so /api/suggestions and lab traces use one code path) ----------
+async function computeSuggestions(meId) {
   const me = (await pool.query('SELECT * FROM users WHERE id=$1', [meId])).rows[0];
   const mySkills = new Set((me.skills || []).map(s => String(s).toLowerCase()));
   const myFandoms = new Set((me.fandoms || []).map(f => String(f).toLowerCase()));
+  const myTags = new Set([...mySkills, ...myFandoms]);
   const following = new Set((await pool.query('SELECT following_id FROM follows WHERE follower_id=$1', [meId])).rows.map(r => r.following_id));
   const all = (await pool.query('SELECT * FROM users WHERE id!=$1 LIMIT 100', [meId])).rows;
   const out = [];
@@ -211,18 +225,25 @@ app.get('/api/suggestions', authenticate, async (req, res) => {
     if (following.has(u.id)) continue;
     const sharedSkills = (u.skills || []).filter(s => mySkills.has(String(s).toLowerCase()));
     const sharedFandoms = (u.fandoms || []).filter(f => myFandoms.has(String(f).toLowerCase()));
+    const theirTags = new Set([...(u.skills || []), ...(u.fandoms || [])].map(t => String(t).toLowerCase()));
+    const inter = [...theirTags].filter(t => myTags.has(t));
+    const union = new Set([...myTags, ...theirTags]);
+    const jaccard = union.size ? inter.length / union.size : 0;
     // mutual: people I follow who also follow them
     const mutual = await pool.query(
       'SELECT u2.username FROM follows f1 JOIN follows f2 ON f2.following_id=$1 AND f2.follower_id=f1.following_id JOIN users u2 ON u2.id=f1.following_id WHERE f1.follower_id=$2 LIMIT 3',
       [u.id, meId]);
     const mutualNames = mutual.rows.map(r => r.username);
-    let score = sharedSkills.length * 10 + sharedFandoms.length * 8 + mutualNames.length * 12;
+    const parts = { skills: sharedSkills.length * 10, fandoms: sharedFandoms.length * 8, mutuals: mutualNames.length * 12 };
+    const score = parts.skills + parts.fandoms + parts.mutuals;
     if (!score) continue;
     const reasons = [];
     if (sharedSkills.length || sharedFandoms.length)
       reasons.push(`Shares your interests: ${[...sharedSkills.slice(0, 2), ...sharedFandoms.slice(0, 2)].join(', ')}`);
     if (mutualNames.length) reasons.push(`Followed by ${mutualNames.slice(0, 2).map(n => '@' + n).join(', ')}${mutualNames.length > 2 ? ` +${mutualNames.length - 2}` : ''} — people you follow`);
-    out.push({ ...pub(u), match_percentage: Math.min(99, 55 + score), recommend_reason: reasons.join(' · ') || 'Active in your communities' });
+    out.push({ ...pub(u), match_percentage: Math.min(99, 55 + score), recommend_reason: reasons.join(' · ') || 'Active in your communities',
+      _trace: { sharedSkills, sharedFandoms, mutualNames, parts, jaccard: +jaccard.toFixed(3),
+        myTagCount: myTags.size, theirTagCount: theirTags.size, interCount: inter.length, unionCount: union.size } });
   }
   out.sort((a, b) => b.match_percentage - a.match_percentage);
   if (!out.length) {
@@ -231,12 +252,71 @@ app.get('/api/suggestions', authenticate, async (req, res) => {
       `SELECT u.*, (SELECT COUNT(*) FROM follows WHERE following_id=u.id) AS fc FROM users u
        WHERE u.id!=$1 AND u.id NOT IN (SELECT following_id FROM follows WHERE follower_id=$1)
        ORDER BY fc DESC LIMIT 6`, [meId]);
-    return res.json(pop.rows.map(u => ({ ...pub(u), match_percentage: 60 + Math.min(30, +u.fc * 3), recommend_reason: 'Popular with geeks right now' })));
+    return { list: pop.rows.map(u => ({ ...pub(u), match_percentage: 60 + Math.min(30, +u.fc * 3), recommend_reason: 'Popular with geeks right now',
+      _trace: { coldStart: true, followerCount: +u.fc } })), coldStart: true };
   }
-  res.json(out.slice(0, 12));
+  return { list: out.slice(0, 12), coldStart: false };
+}
+
+app.get('/api/suggestions', authenticate, async (req, res) => {
+  res.json((await computeSuggestions(req.user.id)).list.map(stripTrace));
 });
 
 app.get('/api/recommendations', authenticate, (req, res) => res.redirect('/api/suggestions'));
+
+// ---------- Algorithm Lab: live traces against the real backend ----------
+app.get('/api/lab/overview', authenticate, async (req, res) => {
+  const meId = req.user.id;
+  const me = (await pool.query('SELECT * FROM users WHERE id=$1', [meId])).rows[0];
+  const c = await pool.query(`SELECT (SELECT COUNT(*) FROM users) users, (SELECT COUNT(*) FROM posts) posts,
+    (SELECT COUNT(*) FROM post_likes) likes, (SELECT COUNT(*) FROM comments) comments,
+    (SELECT COUNT(*) FROM post_shares) shares, (SELECT COUNT(*) FROM follows) follows,
+    (SELECT COUNT(*) FROM follows WHERE follower_id=$1) following, (SELECT COUNT(*) FROM follows WHERE following_id=$1) followers`, [meId]);
+  res.json({ counts: c.rows[0], me: pub(me) });
+});
+
+app.get('/api/lab/feed-trace', authenticate, async (req, res) => {
+  const ranked = await computeFeed(req.user.id);
+  const idx = ranked.findIndex(p => String(p.id) === String(req.query.post_id));
+  if (idx < 0) return res.status(404).json({ error: 'post not in candidate set' });
+  const { _trace, ...post } = ranked[idx];
+  res.json({ post, rank: idx + 1, total: ranked.length, trace: _trace });
+});
+
+app.get('/api/lab/suggest-trace', authenticate, async (req, res) => {
+  const { list } = await computeSuggestions(req.user.id);
+  const idx = list.findIndex(u => String(u.id) === String(req.query.user_id));
+  if (idx < 0) return res.status(404).json({ error: 'user not in suggestion set' });
+  const { _trace, ...user } = list[idx];
+  res.json({ user, rank: idx + 1, total: list.length, trace: _trace });
+});
+
+app.get('/api/lab/ego-graph', authenticate, async (req, res) => {
+  const meId = req.user.id;
+  const me = (await pool.query('SELECT id, username FROM users WHERE id=$1', [meId])).rows[0];
+  const l1 = (await pool.query(
+    `SELECT u.id, u.username FROM follows f JOIN users u ON u.id=f.following_id WHERE f.follower_id=$1 LIMIT 12`, [meId])).rows;
+  const l2rows = l1.length ? (await pool.query(
+    `SELECT f.follower_id AS from_id, u.id, u.username FROM follows f JOIN users u ON u.id=f.following_id WHERE f.follower_id = ANY($1) AND f.following_id != $2`,
+    [l1.map(x => x.id), meId])).rows : [];
+  const nodes = [{ id: meId, label: '@' + me.username, kind: 'me' }];
+  const edges = [];
+  const seen = new Set([meId]);
+  const perParent = {};
+  for (const a of l1) {
+    nodes.push({ id: a.id, label: '@' + a.username, kind: 'follows' });
+    edges.push([meId, a.id]);
+    seen.add(a.id);
+  }
+  for (const b of l2rows) {
+    perParent[b.from_id] = (perParent[b.from_id] || 0) + 1;
+    if (perParent[b.from_id] > 3 || seen.has(b.id)) continue;
+    seen.add(b.id);
+    nodes.push({ id: b.id, label: '@' + b.username, kind: 'mutual' });
+    edges.push([b.from_id, b.id]);
+  }
+  res.json({ nodes, edges });
+});
 
 // ---------- Chat ----------
 app.get('/api/conversations', authenticate, async (req, res) => {
